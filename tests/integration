@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# End-to-end integration test against a RUNNING HTTP endpoint.
+#
+# Starts the dumb capability adapter, which puts a REAL Malbolge Unshackled
+# process in the request path (the hand-written echo primitive). Sends real
+# HTTP, asserts the response body is exactly what the Malbolge program produced.
+#
+# This proves the transport boundary works end to end with genuine Malbolge in
+# the loop. It does NOT claim the application layer exists (see
+# docs/FEASIBILITY.md) — the backing program is the echo primitive.
+# ---------------------------------------------------------------------------
+set -u
+cd "$(dirname "$0")/.."
+PORT="${RUSTER_PORT:-8137}"
+INTERP="runtime/interpreter/malbolge"
+[ -x runtime/interpreter/unshackled ] && INTERP="runtime/interpreter/unshackled"
+
+if [ ! -x "$INTERP" ]; then echo "interpreter not built; run 'make interpreters'"; exit 1; fi
+
+RUSTER_PORT="$PORT" RUSTER_INTERP="$INTERP" \
+  RUSTER_PROGRAM="src/echo_four_bytes.mu" RUSTER_MODE="body" \
+  python3 runtime/capability-adapter/adapter.py &
+ADAPTER_PID=$!
+trap 'kill $ADAPTER_PID 2>/dev/null' EXIT
+
+# wait for listen
+for i in $(seq 1 50); do
+  if curl -s -o /dev/null "http://127.0.0.1:$PORT/" --data-binary 'ping' 2>/dev/null; then break; fi
+  sleep 0.1
+done
+
+fail=0
+check() { # label  body  expected
+  local got
+  got=$(curl -s "http://127.0.0.1:$PORT/$1" --data-binary "$2")
+  if [ "$got" = "$3" ]; then
+    echo "PASS  POST /$1  body='$2'  ->  '$got'  (via real Malbolge process on $INTERP)"
+  else
+    echo "FAIL  POST /$1  body='$2'  want='$3' got='$got'"; fail=1
+  fi
+}
+
+# echo_four_bytes echoes the first 4 input bytes then halts.
+check case  "ABCD" "ABCD"
+check login "wxyz" "wxyz"
+check x     "1234" "1234"
+
+echo
+if [ "$fail" -eq 0 ]; then
+  echo "INTEGRATION PASS: HTTP endpoint served responses produced by a live Malbolge Unshackled process."
+else
+  echo "INTEGRATION FAIL"
+fi
+exit $fail

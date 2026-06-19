@@ -1,0 +1,11 @@
+# name	program	stdin	expected_hex	engines
+# stdin/expected_hex use "-" to mean empty. stdin honours printf %b escapes.
+# engines: both | standard-only  (raw 8-bit bytes cannot round-trip the Haskell
+# reference's locale-encoded getChar, so 0xff is scoped standard-only.)
+halt	src/halt.mu	-	-	standard-only
+print_nul	src/print_nul.mu	-	00	both
+echo_one_Z	src/echo_one_byte.mu	Z	5a	both
+echo_one_7	src/echo_one_byte.mu	7	37	both
+echo_one_ff	src/echo_one_byte.mu	\xff	ff	standard-only
+echo_four_ABCD	src/echo_four_bytes.mu	ABCD	41424344	both
+echo_four_wxyz	src/echo_four_bytes.mu	wxyz	7778797a	both

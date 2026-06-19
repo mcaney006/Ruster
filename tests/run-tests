@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# RUSTER test harness.
+#
+# Runs every hand-written Malbolge Unshackled program in src/ through a REAL
+# interpreter and compares captured stdout against a deterministic expected
+# value. Nothing here is mocked: each case actually executes the .mu file.
+#
+# Engines:
+#   * runtime/interpreter/malbolge   (Ben Olmstead reference, standard Malbolge)
+#   * runtime/interpreter/unshackled (Orjan Johansen reference, Unshackled)
+#
+# Case file: tests/cases.tsv  (tab separated; "-" means empty).
+# ---------------------------------------------------------------------------
+set -u
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+STD="$ROOT/runtime/interpreter/malbolge"
+UNS="$ROOT/runtime/interpreter/unshackled"
+CASES="$ROOT/tests/cases.tsv"
+TIMEOUT="${TIMEOUT:-10}"
+
+pass=0; fail=0; skip=0
+hexout() { od -An -v -tx1 | tr -d ' \n'; }
+
+printf '%-16s %-26s %-11s %-7s %s\n' NAME PROGRAM ENGINE RESULT DETAIL
+printf '%.0s-' {1..88}; echo
+
+while IFS=$'\t' read -r name prog stin exp engines; do
+  case "$name" in ''|'#'*) continue;; esac
+  [ "$stin" = "-" ] && stin=""
+  [ "$exp"  = "-" ] && exp=""
+  for eng in std uns; do
+    if [ "$eng" = std ]; then bin="$STD"; tag=standard; else bin="$UNS"; tag=unshackled; fi
+    [ "$engines" = standard-only ] && [ "$eng" = uns ] && continue
+    if [ ! -x "$bin" ]; then
+      printf '%-16s %-26s %-11s %-7s %s\n' "$name" "$prog" "$tag" SKIP "interpreter not built"
+      skip=$((skip+1)); continue
+    fi
+    infile="$(mktemp)"; printf '%b' "$stin" > "$infile"
+    got="$(timeout "$TIMEOUT" "$bin" "$prog" < "$infile" 2>/dev/null | hexout)"
+    rm -f "$infile"
+    if [ "$got" = "$exp" ]; then
+      printf '%-16s %-26s %-11s %-7s %s\n' "$name" "$prog" "$tag" PASS "stdout=${exp:-<empty>}"
+      pass=$((pass+1))
+    else
+      printf '%-16s %-26s %-11s %-7s %s\n' "$name" "$prog" "$tag" FAIL "want=${exp:-<empty>} got=${got:-<empty>}"
+      fail=$((fail+1))
+    fi
+  done
+done < "$CASES"
+
+echo
+echo "PASS=$pass FAIL=$fail SKIP=$skip"
+[ "$fail" -eq 0 ]
