@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# forbidden-language-check  (spec requirement: "Fail the build when
+# forbidden-language application code is detected.")
+#
+# Application logic must be raw Malbolge in src/*.mu. This gate fails if the
+# application source directory contains anything other than Malbolge sources
+# (.mu) and their companion docs (.md). It also refuses obvious
+# forbidden-language source files anywhere they would constitute application
+# logic.
+#
+# Permitted non-Malbolge components live ONLY in these locations and are NOT
+# application logic:
+#   runtime/interpreter/   (unmodified interpreter: C and Haskell reference)
+#   runtime/capability-adapter/ (dumb byte adapter — framing only)
+#   tools/                 (build/verification helpers)
+#   tests/                 (harness)
+#   static/                (CSS)
+#   container/             (docker/nginx)
+# ---------------------------------------------------------------------------
+set -u
+cd "$(dirname "$0")/.."
+fail=0
+
+echo "== forbidden-language gate =="
+
+# 1) src/ may contain ONLY *.mu and *.md
+while IFS= read -r f; do
+  case "$f" in
+    *.mu|*.md) : ;;
+    *)
+      echo "FORBIDDEN: non-Malbolge file in application source dir: $f"
+      fail=1 ;;
+  esac
+done < <(find src -type f 2>/dev/null)
+
+# 2) No forbidden-language application source may masquerade as app logic.
+#    (We scan src/ only; runtime/tools/tests are permitted components.)
+if find src -type f \( \
+      -name '*.js' -o -name '*.ts' -o -name '*.py' -o -name '*.rs' -o \
+      -name '*.go' -o -name '*.c' -o -name '*.cpp' -o -name '*.java' -o \
+      -name '*.rb' -o -name '*.php' -o -name '*.swift' -o -name '*.kt' -o \
+      -name '*.hs' -o -name '*.lisp' -o -name '*.scm' -o -name '*.wat' \
+   \) 2>/dev/null | grep -q .; then
+  echo "FORBIDDEN: conventional-language source found under src/"
+  fail=1
+fi
+
+# 3) Every src/*.mu must be printable-ASCII Malbolge (a real source the
+#    interpreter accepts), not a description or a generated blob marker.
+while IFS= read -r f; do
+  bad=$(python3 - "$f" <<'PY'
+import sys
+raw=open(sys.argv[1],'rb').read()
+print(sum(1 for b in raw if not chr(b).isspace() and not (33<=b<=126)))
+PY
+)
+  if [ "$bad" != "0" ]; then
+    echo "FORBIDDEN: $f has $bad non-printable byte(s) (not a valid Malbolge source)"
+    fail=1
+  fi
+done < <(find src -type f -name '*.mu' 2>/dev/null)
+
+if [ "$fail" -eq 0 ]; then
+  echo "PASS: application source is raw Malbolge only."
+else
+  echo "FAIL: forbidden-language application code detected."
+fi
+exit $fail

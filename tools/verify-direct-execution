@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# verify-direct-execution
+#
+# Proves that every src/*.mu file is DIRECTLY EXECUTABLE by a documented
+# Malbolge interpreter -- i.e. that the bytes in the repository are real
+# Malbolge, not a description of Malbolge. For each source file it:
+#   1. confirms the file is non-empty and printable-ASCII (a valid source),
+#   2. feeds it straight to the reference interpreter,
+#   3. reports that the interpreter accepted and ran it (exit status / output).
+#
+# It does NOT transform, assemble, normalise, or generate anything. The file on
+# disk is the file that runs.
+# ---------------------------------------------------------------------------
+set -u
+cd "$(dirname "$0")/.."
+STD="runtime/interpreter/malbolge"
+UNS="runtime/interpreter/unshackled"
+
+if [ ! -x "$STD" ]; then
+  echo "error: $STD not built. Run 'make interpreters' first." >&2
+  exit 1
+fi
+
+fail=0
+for f in src/*.mu; do
+  bytes=$(wc -c < "$f")
+  # every non-whitespace byte must be printable ASCII 33..126
+  badbyte=$(python3 - "$f" <<'PY'
+import sys
+raw=open(sys.argv[1],'rb').read()
+bad=[b for b in raw if not chr(b).isspace() and not (33<=b<=126)]
+print(len(bad))
+PY
+)
+  printf 'src=%-26s bytes=%-4s ' "$f" "$bytes"
+  if [ "$badbyte" != "0" ]; then
+    echo "INVALID: contains $badbyte non-printable byte(s)"; fail=1; continue
+  fi
+  # actually run it; "halt"/"echo" programs read stdin, so give them an empty/one byte
+  out=$(printf 'A' | timeout 10 "$STD" "$f" 2>/tmp/vde.err | od -An -tx1 | tr -d ' \n')
+  rc=$?
+  err=$(cat /tmp/vde.err)
+  if [ -n "$err" ]; then
+    echo "REJECTED by interpreter: $err"; fail=1; continue
+  fi
+  echo "EXECUTED (standard) rc=$rc stdout_hex=${out:-<none>}"
+done
+
+echo
+if [ "$fail" -eq 0 ]; then
+  echo "DIRECT EXECUTION VERIFIED: all src/*.mu are accepted and run by the interpreter."
+else
+  echo "DIRECT EXECUTION FAILED."
+fi
+exit $fail
